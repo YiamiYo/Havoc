@@ -118,7 +118,7 @@ void animated::draw(void) {
 	glEnable(GL_TEXTURE_2D);
 	glBindTexture(GL_TEXTURE_2D, data->tga->getTex());
 	glBegin(GL_TRIANGLES);
-	glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+	//glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
 	glTexCoord2f(FSuv[0], FSuv[1]);
 	glVertex2f(0.0f, 0.0f);

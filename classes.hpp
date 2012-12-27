@@ -11,6 +11,7 @@
 #define GAME_STATE_SCORE 5
 #define GAME_STATE_ABOUT 6
 #define GAME_STATE_MUSIC 7
+#define GAME_STATE_PAUSE 10
 
 //GAME_STATE_MENU
 #define MENU_BUTTON_WIDTH_PERC (325.0f / 1024.0f)
@@ -23,7 +24,7 @@
 #define INIT_COUNTDOWN 3000
 
 //GAME_STATE_START / GAME_STATE_PLAYING
-#define INIT_SCROLL_SPEED 150.0f;
+#define INIT_SCROLL_SPEED 100.0f
 #define INIT_PLATFORM_SIZE 5
 
 #define PLAYER_WIDTH 128.0f
@@ -32,15 +33,29 @@
 #define PLAYER_JUMP 950.0f;
 #define PLAYER_GRAVITY 2000.0f
 #define PLAYER_ATTACK_TIME 250
+#define PLAYER_INVULNERABLE_TIME 2000
 
+#define POINTS_FOR_LEVEL 300
+#define LEVEL_INCREASE_SPEED 0.25f
 #define POINTS_PER_PLATFORM 15
 #define POINTS_PER_MONSTER 30
+#define POINTS_PER_SHIELD 50
+#define POINTS_PER_CANDY 10
 
 #define TERRAIN_SPACE_Y 200.0f
 #define MOB_SPAWN_CHANCE 0.35f
 #define TERRAIN_TILE_WIDTH 31.25f //62.5f
 #define TERRAIN_EDGE_WIDTH 47.75f //95.5f
 #define TERRAIN_HEIGHT 66.75f //133.5f
+
+#define BUFF_SHIELD_CHANCE 0.1f
+#define BUFF_CANDY_CHANCE 0.2f
+#define BUFF_SIZE 64
+#define BUFF_TYPE_SHIELD 1
+#define BUFF_TYPE_CANDY 2
+#define BUFF_CANDY_TIME 5000
+#define BUFF_CANDY_EFFECT 0.25f
+#define BUFF_CANDY_GOOD_CHANCE 0.35f
 
 #define MOB_SPEED 100.0f
 #define MOB_WIDTH 128.0f
@@ -59,10 +74,10 @@ typedef struct color {
 typedef struct player {
 	animated *sprite;
 	point pos, vel;
-	bool fall;
+	bool fall, shield;
 	float fall_min, fall_max;
-	unsigned int score;
-	unsigned int atk_time;
+	unsigned int score, level;
+	unsigned int atk_time, inv_time, candy_slow_time, candy_fast_time;
 } player;
 
 typedef struct monster {
@@ -82,6 +97,11 @@ typedef struct terrain {
 	monster *mob;
 } terrain;
 
+typedef struct buff {
+	point pos;
+	unsigned char type;
+} buff;
+
 typedef struct button {
 	animated *sprite;
 	point pos;
@@ -92,11 +112,12 @@ class game {
 		animations *anim;
 		unsigned char state;
 		unsigned int width, height;
-		ttf *cd_font, *score_font;
+		ttf *cd_font, *score_font, *txt_font;
 		
 		//GAME_STATE_MENU
 		animated *menu_bg;
 		button menu_play, menu_music, menu_score, menu_about;
+		char menu_sel;
 		
 		//GAME_STATE_START
 		int countdown;
@@ -105,9 +126,11 @@ class game {
 		color c_top, c_bot, cd_top, cd_bot;
 		player main_char;
 		std::list<terrain> ters;
+		std::list<buff> buffs;
 		float scroll_pos, scroll_speed;
 		unsigned char platform_size;
 		animated *platform_edge, *platform_tile;
+		animated *shield, *candy;
 		
 		void setDir(void);
 		void setState(unsigned char);
@@ -156,6 +179,14 @@ void game::unsetState(void) {
 			delete platform_tile;
 			platform_tile = NULL;
 		}
+		if(shield) {
+			delete shield;
+			shield = NULL;
+		}
+		if(candy) {
+			delete candy;
+			candy = NULL;
+		}
 	}
 	state = 0;
 }
@@ -181,6 +212,8 @@ void game::setState(unsigned char ns) {
 		menu_about.pos.x = menu_score.pos.x;
 		menu_about.pos.y = menu_score.pos.y + button_margin_y;
 		menu_about.sprite = new (std::nothrow) animated((*anim)["menu_button_about"], button_width, button_height);
+		menu_sel = 1;
+		menu_play.sprite->stop(1);
 	} else if(state == GAME_STATE_START) {
 		c_top.r = 0.4f;
 		c_top.g = 0.95f;
@@ -195,11 +228,18 @@ void game::setState(unsigned char ns) {
 		cd_bot.g = 0.0f;
 		cd_bot.b = 0.0f;
 	
+		while(ters.begin() != ters.end()) {
+			if(ters.front().mob) delete ters.front().mob;
+			ters.pop_front();
+		}
+		while(buffs.begin() != buffs.end()) {
+			buffs.pop_front();
+		}
 		countdown = INIT_COUNTDOWN;
 		scroll_pos = 0.0f;
 		scroll_speed = INIT_SCROLL_SPEED;
 		platform_size = INIT_PLATFORM_SIZE;
-		unsigned int tps = ((unsigned int)(width / TERRAIN_SPACE_Y) + 1);
+		unsigned int tps = ((unsigned int)(height / TERRAIN_SPACE_Y) + 1);
 		for(unsigned int i = 1; i <= tps; i++) {
 			terrain temp_t;
 			temp_t.size = platform_size;
@@ -215,6 +255,7 @@ void game::setState(unsigned char ns) {
 		}
 		main_char.sprite = new (std::nothrow) animated((*anim)["char_main"], PLAYER_WIDTH, PLAYER_HEIGHT);
 		main_char.score = 0;
+		main_char.level = 0;
 		main_char.pos = ters.begin()->pos;
 		main_char.fall = false;
 		main_char.fall_min = ters.begin()->pos.x - ters.begin()->width / 2.0f;
@@ -222,9 +263,15 @@ void game::setState(unsigned char ns) {
 		main_char.vel.x = 0.0f;
 		main_char.vel.y = 0.0f;
 		main_char.atk_time = 0;
+		main_char.inv_time = 0;
+		main_char.candy_fast_time = 0;
+		main_char.candy_slow_time = 0;
+		main_char.shield = true;
 		
 		platform_edge = new (std::nothrow) animated((*anim)["platform_edge"], TERRAIN_EDGE_WIDTH, TERRAIN_HEIGHT);
 		platform_tile = new (std::nothrow) animated((*anim)["platform_tile"], TERRAIN_TILE_WIDTH, TERRAIN_HEIGHT);
+		shield = new (std::nothrow) animated((*anim)["shield"], BUFF_SIZE, BUFF_SIZE);
+		candy = new (std::nothrow) animated((*anim)["candy"], BUFF_SIZE, BUFF_SIZE);
 	} else if(state == GAME_STATE_GAMEOVER) {
 	
 	}
@@ -239,6 +286,7 @@ game::game(animations* i_anim, unsigned int scr_width, unsigned int scr_height) 
 	//cd_font = new (std::nothrow) ttf("Alien Bold.ttf", 256);
 	cd_font = new (std::nothrow) ttf("AltamonteNF.ttf", 256);
 	score_font = new (std::nothrow) ttf("AltamonteNF.ttf", 64);
+	txt_font = new (std::nothrow) ttf("Alan Den.ttf", 32);
 	
 	setState(GAME_STATE_MENU);
 }
@@ -252,6 +300,10 @@ game::~game(void) {
 	if(score_font) {
 		delete score_font;
 		score_font = NULL;
+	}
+	if(txt_font) {
+		delete txt_font;
+		txt_font = NULL;
 	}
 }
 
@@ -268,17 +320,28 @@ bool game::handle(SDL_Event *event) {
 	if(event->type == SDL_QUIT) cont = false;
 	if(state == GAME_STATE_MENU) {
 		if(event->type == SDL_MOUSEMOTION) {
-			if(event->motion.x > menu_play.pos.x && event->motion.x < menu_play.pos.x + menu_play.sprite->getSize().x && event->motion.y > menu_play.pos.y && event->motion.y < menu_play.pos.y + menu_play.sprite->getSize().y) menu_play.sprite->stop(1);
-			else {
+			if(event->motion.x > menu_play.pos.x && event->motion.x < menu_play.pos.x + menu_play.sprite->getSize().x && event->motion.y > menu_play.pos.y && event->motion.y < menu_play.pos.y + menu_play.sprite->getSize().y) {
+				menu_play.sprite->stop(1);
+				menu_sel = 1;
+			} else {
 				menu_play.sprite->stop(0);
-				if(event->motion.x > menu_music.pos.x && event->motion.x < menu_music.pos.x + menu_music.sprite->getSize().x && event->motion.y > menu_music.pos.y && event->motion.y < menu_music.pos.y + menu_music.sprite->getSize().y) menu_music.sprite->stop(1);
-				else {
+				if(event->motion.x > menu_music.pos.x && event->motion.x < menu_music.pos.x + menu_music.sprite->getSize().x && event->motion.y > menu_music.pos.y && event->motion.y < menu_music.pos.y + menu_music.sprite->getSize().y) {
+				menu_music.sprite->stop(1);
+				menu_sel = 2;
+				} else {
 					menu_music.sprite->stop(0);
-					if(event->motion.x > menu_score.pos.x && event->motion.x < menu_score.pos.x + menu_score.sprite->getSize().x && event->motion.y > menu_score.pos.y && event->motion.y < menu_score.pos.y + menu_score.sprite->getSize().y) menu_score.sprite->stop(1);
-					else {
+					if(event->motion.x > menu_score.pos.x && event->motion.x < menu_score.pos.x + menu_score.sprite->getSize().x && event->motion.y > menu_score.pos.y && event->motion.y < menu_score.pos.y + menu_score.sprite->getSize().y) {
+						menu_score.sprite->stop(1);
+						menu_sel = 3;
+					} else {
 						menu_score.sprite->stop(0);
-						if(event->motion.x > menu_about.pos.x && event->motion.x < menu_about.pos.x + menu_about.sprite->getSize().x && event->motion.y > menu_about.pos.y && event->motion.y < menu_about.pos.y + menu_about.sprite->getSize().y) menu_about.sprite->stop(1);
-						else menu_about.sprite->stop(0);
+						if(event->motion.x > menu_about.pos.x && event->motion.x < menu_about.pos.x + menu_about.sprite->getSize().x && event->motion.y > menu_about.pos.y && event->motion.y < menu_about.pos.y + menu_about.sprite->getSize().y) {
+							menu_about.sprite->stop(1);
+							menu_sel = 4;
+						} else {
+							menu_about.sprite->stop(0);
+							menu_sel = 0;
+						}
 					}
 				}
 			}
@@ -287,6 +350,35 @@ bool game::handle(SDL_Event *event) {
 			else if(event->button.x > menu_music.pos.x && event->button.x < menu_music.pos.x + menu_music.sprite->getSize().x && event->button.y > menu_music.pos.y && event->button.y < menu_music.pos.y + menu_music.sprite->getSize().y) setState(GAME_STATE_MUSIC);
 			else if(event->button.x > menu_score.pos.x && event->button.x < menu_score.pos.x + menu_score.sprite->getSize().x && event->button.y > menu_score.pos.y && event->button.y < menu_score.pos.y + menu_score.sprite->getSize().y) setState(GAME_STATE_SCORE);
 			else if(event->button.x > menu_about.pos.x && event->button.x < menu_about.pos.x + menu_about.sprite->getSize().x && event->button.y > menu_about.pos.y && event->button.y < menu_about.pos.y + menu_about.sprite->getSize().y) setState(GAME_STATE_ABOUT);
+		} else if(event->type == SDL_KEYDOWN) {
+			if(event->key.keysym.sym == SDLK_RETURN) {
+				if(menu_sel == 1) setState(GAME_STATE_START);
+				else if(menu_sel == 2) setState(GAME_STATE_MUSIC);
+				else if(menu_sel == 3) setState(GAME_STATE_SCORE);
+				else if(menu_sel == 4) setState(GAME_STATE_ABOUT);
+			} else if(event->key.keysym.sym == SDLK_DOWN) {
+				if(menu_sel == 1) menu_play.sprite->stop(0);
+				else if(menu_sel == 2) menu_music.sprite->stop(0);
+				else if(menu_sel == 3) menu_score.sprite->stop(0);
+				else if(menu_sel == 4) menu_about.sprite->stop(0);
+				menu_sel++;
+				if(menu_sel > 4) menu_sel = 1;
+				if(menu_sel == 1) menu_play.sprite->stop(1);
+				else if(menu_sel == 2) menu_music.sprite->stop(1);
+				else if(menu_sel == 3) menu_score.sprite->stop(1);
+				else if(menu_sel == 4) menu_about.sprite->stop(1);
+			} else if(event->key.keysym.sym == SDLK_UP) {
+				if(menu_sel == 1) menu_play.sprite->stop(0);
+				else if(menu_sel == 2) menu_music.sprite->stop(0);
+				else if(menu_sel == 3) menu_score.sprite->stop(0);
+				else if(menu_sel == 4) menu_about.sprite->stop(0);
+				menu_sel--;
+				if(menu_sel < 1) menu_sel = 4;
+				if(menu_sel == 1) menu_play.sprite->stop(1);
+				else if(menu_sel == 2) menu_music.sprite->stop(1);
+				else if(menu_sel == 3) menu_score.sprite->stop(1);
+				else if(menu_sel == 4) menu_about.sprite->stop(1);
+			}
 		}
 	} else if(state == GAME_STATE_PLAYING) {
 		if(event->type == SDL_KEYDOWN) {
@@ -304,6 +396,8 @@ bool game::handle(SDL_Event *event) {
 			} else if(event->key.keysym.sym == SDLK_SPACE && main_char.atk_time == 0) {
 				main_char.sprite->playAnimation((*anim)["main_char_hit"], false);
 				main_char.atk_time = PLAYER_ATTACK_TIME;
+			} else if(event->key.keysym.sym == SDLK_ESCAPE) {
+				setState(GAME_STATE_PAUSE);
 			}
 		} else if(event->type == SDL_KEYUP) {
 			if(event->key.keysym.sym == SDLK_RIGHT && main_char.vel.x > 0.0f) {
@@ -313,6 +407,18 @@ bool game::handle(SDL_Event *event) {
 				main_char.vel.x += PLAYER_SPEED;
 				setDir();
 			}
+		}
+	} else if(state == GAME_STATE_GAMEOVER) {
+		if(event->type == SDL_KEYDOWN) {
+			if(event->key.keysym.sym == SDLK_RETURN) setState(GAME_STATE_MENU);
+		}
+	} else if(state == GAME_STATE_PAUSE) {
+		if(event->type == SDL_KEYDOWN) {
+			if(event->key.keysym.sym == SDLK_RETURN) {
+				setState(GAME_STATE_GAMEOVER);
+				setState(GAME_STATE_MENU);
+			}
+			else if(event->key.keysym.sym == SDLK_ESCAPE) setState(GAME_STATE_PLAYING);
 		}
 	}
 	return cont;
@@ -338,12 +444,50 @@ void game::refresh(unsigned int t_diff) {
 		bool coll = false;
 		point npos;
 		
-		npos.x = main_char.pos.x + main_char.vel.x * fsec;
+		npos.x = main_char.pos.x + (1.0f + BUFF_CANDY_EFFECT * (float)(main_char.candy_fast_time != 0) - BUFF_CANDY_EFFECT * (float)(main_char.candy_slow_time != 0)) * main_char.vel.x * fsec;
 		if(npos.x < main_char.fall_min || npos.x > main_char.fall_max) main_char.fall = true;
 		npos.y = main_char.pos.y;
 		if(main_char.fall) npos.y = main_char.pos.y + main_char.vel.y * fsec + 0.5f * PLAYER_GRAVITY * fsec * fsec;
+		if(main_char.inv_time > t_diff) main_char.inv_time -= t_diff;
+		else main_char.inv_time = 0;
+		if(main_char.candy_slow_time > t_diff) main_char.candy_slow_time -= t_diff;
+		else main_char.candy_slow_time = 0;
+		if(main_char.candy_fast_time > t_diff) main_char.candy_fast_time -= t_diff;
+		else main_char.candy_fast_time = 0;
 		
 		//TERRAIN
+		while(buffs.begin() != buffs.end() && buffs.front().pos.y + BUFF_SIZE < scroll_pos) buffs.pop_front();
+		std::list<buff>::iterator bit, rit;
+		for(bit = buffs.begin(); bit != buffs.end(); bit++) {
+			float dx = bit->pos.x - main_char.pos.x;
+			float dy = bit->pos.y - main_char.pos.y;
+			if(dx < 0.0f) dx = -dx;
+			if(dy < 0.0f) dy = -dy;
+			if((dx < main_char.sprite->getSize().x / 2.0f) && (dy < main_char.sprite->getSize().y / 2.0f)) {
+				if(bit->type == BUFF_TYPE_SHIELD) {
+					if(main_char.shield) {
+						main_char.score += POINTS_PER_SHIELD;
+						main_char.level = main_char.score / POINTS_FOR_LEVEL;
+						platform_size = INIT_PLATFORM_SIZE - (main_char.level / 2);
+						scroll_speed = INIT_SCROLL_SPEED + INIT_SCROLL_SPEED * ((main_char.level + 1) / 2) * LEVEL_INCREASE_SPEED;
+					} else main_char.shield = true;
+				} else if(bit->type == BUFF_TYPE_CANDY) {
+					main_char.score += POINTS_PER_CANDY;
+					main_char.level = main_char.score / POINTS_FOR_LEVEL;
+					platform_size = INIT_PLATFORM_SIZE - (main_char.level / 2);
+					scroll_speed = INIT_SCROLL_SPEED + INIT_SCROLL_SPEED * ((main_char.level + 1) / 2) * LEVEL_INCREASE_SPEED;
+					if((float)rand() / (float)RAND_MAX > BUFF_CANDY_GOOD_CHANCE) {
+						main_char.candy_slow_time = BUFF_CANDY_TIME;
+					} else {
+						main_char.candy_fast_time = BUFF_CANDY_TIME;
+					}
+				}
+				rit = bit;
+				buffs.erase(rit);
+				bit--;
+			}
+		}
+		
 		if(ters.front().pos.y + platform_edge->getSize().y < scroll_pos) {
 			terrain temp_t;
 			temp_t.size = platform_size;
@@ -360,9 +504,24 @@ void game::refresh(unsigned int t_diff) {
 				delete ters.front().mob;
 				ters.front().mob = NULL;
 			}
-			if(state == GAME_STATE_PLAYING) main_char.score += POINTS_PER_PLATFORM;
+			if(state == GAME_STATE_PLAYING) {
+				main_char.score += POINTS_PER_PLATFORM;
+				main_char.level = main_char.score / POINTS_FOR_LEVEL;
+				platform_size = INIT_PLATFORM_SIZE - (main_char.level / 2);
+				scroll_speed = INIT_SCROLL_SPEED + INIT_SCROLL_SPEED * ((main_char.level + 1) / 2) * LEVEL_INCREASE_SPEED;
+			}
 			ters.pop_front();
+			float tr = (float)rand() / (float)RAND_MAX;
+			if(tr <= BUFF_SHIELD_CHANCE + BUFF_CANDY_CHANCE) {
+				buff bt;
+				bt.pos.y = temp_t.pos.y + (float)rand() / (float)RAND_MAX * ((float)TERRAIN_SPACE_Y - (float)TERRAIN_HEIGHT) + (float)TERRAIN_HEIGHT;
+				bt.pos.x = (float)rand() / (float)RAND_MAX * ((float)width - 2.0f * (float)BUFF_SIZE) + (float)BUFF_SIZE;
+				if(tr <= BUFF_SHIELD_CHANCE) bt.type = BUFF_TYPE_SHIELD;
+				else bt.type = BUFF_TYPE_CANDY;
+				buffs.push_back(bt);
+			}
 		}
+		
 		
 		//TERRAIN - MONSTER
 		std::list<terrain>::iterator it;
@@ -381,7 +540,7 @@ void game::refresh(unsigned int t_diff) {
 							if(nt2 >= 0.0f && nt2 <= fsec) nt = nt2;
 							else if(nt1 >= 0.0f && nt1 <= fsec) nt = nt1;
 						}
-						float ntposx = main_char.pos.x + main_char.vel.x * nt;
+						float ntposx = main_char.pos.x + (1.0f + BUFF_CANDY_EFFECT * (float)(main_char.candy_fast_time != 0) - BUFF_CANDY_EFFECT * (float)(main_char.candy_slow_time != 0)) * main_char.vel.x * nt;
 						if(ntposx >= it->pos.x - it->width / 2.0f && ntposx <= it->pos.x + it->width / 2.0f) {
 							npos.y = main_char.pos.y + main_char.vel.y * nt + 0.5f * PLAYER_GRAVITY * nt * nt;
 							coll = true;
@@ -403,13 +562,21 @@ void game::refresh(unsigned int t_diff) {
 					if((dx < main_char.sprite->getSize().x / 4.0f + it->mob->sprite->getSize().x / 4.0f) && (dy < it->mob->sprite->getSize().y / 2.0f)) {
 						if(main_char.atk_time > 0) {
 							main_char.score += POINTS_PER_MONSTER;
+							main_char.level = main_char.score / POINTS_FOR_LEVEL;
+							platform_size = INIT_PLATFORM_SIZE - (main_char.level / 2);
+							scroll_speed = INIT_SCROLL_SPEED + INIT_SCROLL_SPEED * ((main_char.level + 1) / 2) * LEVEL_INCREASE_SPEED;
 							delete it->mob;
 							it->mob = NULL;
 							//main_char.atk_time = 0;
 							break;
 						} else {
-							setState(GAME_STATE_GAMEOVER);
-							break;
+							if(main_char.shield) {
+								main_char.shield = false;
+								main_char.inv_time = PLAYER_INVULNERABLE_TIME;
+							} else if(!main_char.inv_time) {
+								setState(GAME_STATE_GAMEOVER);
+								break;
+							}
 						}
 					}
 				}
@@ -450,7 +617,15 @@ void game::refresh(unsigned int t_diff) {
 			else main_char.vel.y = 0.0f;
 			while(main_char.pos.x < 0.0f) main_char.pos.x = width + main_char.pos.x;
 			while(main_char.pos.x > width) main_char.pos.x -= width;
-			if(main_char.pos.y - main_char.sprite->getSize().y / 2.0f < scroll_pos || main_char.pos.y - main_char.sprite->getSize().y / 2.0f > scroll_pos + height) setState(GAME_STATE_GAMEOVER);
+			if(main_char.pos.y - main_char.sprite->getSize().y / 2.0f < scroll_pos || main_char.pos.y - main_char.sprite->getSize().y / 2.0f > scroll_pos + height) {
+				if(main_char.shield) {
+					main_char.shield = false;
+					main_char.inv_time = PLAYER_INVULNERABLE_TIME;
+					main_char.pos.x = ters.back().pos.x;
+					main_char.pos.y = ters.back().pos.y - TERRAIN_SPACE_Y;
+					main_char.fall = true;
+				} else if(!main_char.inv_time) setState(GAME_STATE_GAMEOVER);
+			}
 		}
 	}
 	if(main_char.atk_time > t_diff) main_char.atk_time -= t_diff;
@@ -460,6 +635,7 @@ void game::refresh(unsigned int t_diff) {
 void game::draw(void) {
 	glClear(GL_COLOR_BUFFER_BIT);// | GL_DEPTH_BUFFER_BIT);
 	glLoadIdentity();
+	glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 	
 	if(state == GAME_STATE_MENU) {
 		glPushMatrix();
@@ -477,7 +653,7 @@ void game::draw(void) {
 		glTranslatef(menu_about.pos.x, menu_about.pos.y, 0.0f);
 		menu_about.sprite->draw();
 		glPopMatrix();
-	} else if(state == GAME_STATE_PLAYING || state == GAME_STATE_START || state == GAME_STATE_GAMEOVER) {
+	} else if(state == GAME_STATE_PLAYING || state == GAME_STATE_START || state == GAME_STATE_GAMEOVER || state == GAME_STATE_PAUSE) {
 		glBegin(GL_TRIANGLES);
 		glColor4f(c_top.r, c_top.g, c_top.b, 1.0f);
 		glVertex2f(0.0f, 0.0f);
@@ -492,15 +668,8 @@ void game::draw(void) {
 		glVertex2f(width, height);
 		glEnd();
 		
-		
-		glPushMatrix();
-		glLoadIdentity();
 		glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-		score_font->draw(itos(main_char.score));
-		glPopMatrix();
-		
 		glTranslatef(0.0f, -scroll_pos, 0.0f);
-		
 		//TERRAIN
 		std::list<terrain>::iterator it;
 		for(it = ters.begin(); it != ters.end(); it++) {
@@ -530,11 +699,25 @@ void game::draw(void) {
 			
 			glPopMatrix();
 		}
+		std::list<buff>::iterator bit;
+		for(bit = buffs.begin(); bit != buffs.end(); bit++) {
+			glPushMatrix();
+			//glLoadIdentity();
+			glTranslatef(bit->pos.x - (float)BUFF_SIZE / 2.0f, bit->pos.y - (float)BUFF_SIZE / 2.0f, 0.0f);
+			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+			if(bit->type == BUFF_TYPE_SHIELD) shield->draw();
+			else if(bit->type == BUFF_TYPE_CANDY) candy->draw();
+			glPopMatrix();
+		}
 		
-		if(state == GAME_STATE_PLAYING || state == GAME_STATE_START) {
+		if(state == GAME_STATE_PLAYING || state == GAME_STATE_START || state == GAME_STATE_PAUSE) {
 			glPushMatrix();
 			glTranslatef(main_char.pos.x - main_char.sprite->getSize().x / 2.0f, main_char.pos.y - main_char.sprite->getSize().y, 0.0f);
+			if(main_char.shield) glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+			else if(main_char.inv_time) glColor4f(0.5f, 0.5f, 0.5f, 0.5f);
+			else glColor4f(1.0f, 0.5f, 0.5f, 1.0f);
 			main_char.sprite->draw();
+			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 			glPopMatrix();
 		}
 		
@@ -544,7 +727,15 @@ void game::draw(void) {
 			cd_font->drawCenter(itos(countdown / 1000 + 1));
 		}
 		
-		if(state == GAME_STATE_GAMEOVER) {
+		glPushMatrix();
+		glLoadIdentity();
+		glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+		score_font->drawLeft(itos(main_char.score));
+		glTranslatef(width, 0.0f, 0.0f);
+		score_font->drawRight(itos(main_char.level));
+		glPopMatrix();
+		
+		if(state == GAME_STATE_GAMEOVER || state == GAME_STATE_PAUSE) {
 			glLoadIdentity();
 			glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
 			glBegin(GL_TRIANGLES);
@@ -555,9 +746,18 @@ void game::draw(void) {
 			glVertex2f(width, 0.0f);
 			glVertex2f(width, height);
 			glEnd();
-			glTranslatef(width / 2.0f, height / 2.0f, 0.0f);
-			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-			score_font->drawCenter("Game Over!");
+			if(state == GAME_STATE_GAMEOVER) {
+				glTranslatef(width / 2.0f, height / 2.0f, 0.0f);
+				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+				score_font->drawCenter("Game Over!");
+			} else if(state == GAME_STATE_PAUSE) {
+				glTranslatef(width / 2.0f, height / 2.0f, 0.0f);
+				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+				score_font->drawCenter("Pause");
+			}
+			glLoadIdentity();
+			glTranslatef(width / 2.0f, height / 2.0f + 100.0f, 0.0f);
+			txt_font->drawCenter("Press Enter to go to the main menu");
 		}
 	}
 	

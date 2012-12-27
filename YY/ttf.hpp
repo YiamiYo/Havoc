@@ -19,11 +19,12 @@ class ttf {
 	public:
 		ttf(const char*, int);
 		~ttf(void);
-		void draw(std::string);
+		void drawLeft(std::string);
 		void drawCenter(std::string);
+		void drawRight(std::string);
 };
 
-void ttf::draw(std::string str) {
+void ttf::drawLeft(std::string str) {
 	float curx = 0.0f, cury = 0.0f;
 	//glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 	for(unsigned int i = 0; i < str.size(); i++) {
@@ -69,7 +70,23 @@ void ttf::drawCenter(std::string str) {
 	}
 	glTranslatef(-total_width / 2.0f, -total_height / 2.0f, 0.0f);
 	//std::cout<<str.size()<<": "<<total_width<<", "<<total_height<<"\r\n";
-	draw(str);
+	drawLeft(str);
+}
+
+void ttf::drawRight(std::string str) {
+	float total_width = 0.0f, total_height = char_maxh, curw = 0.0f;
+	for(unsigned int i = 0; i < str.size(); i++) {
+		if(str[i] == '\n') {
+			total_height += char_maxh;
+			curw = 0.0f;
+		} else {
+			curw += char_w[str[i]];
+		}
+		if(curw > total_width) total_width = curw;
+	}
+	glTranslatef(-total_width, 0.0f, 0.0f);
+	//std::cout<<str.size()<<": "<<total_width<<", "<<total_height<<"\r\n";
+	drawLeft(str);
 }
 
 ttf::ttf(const char *fontpath, int size) {

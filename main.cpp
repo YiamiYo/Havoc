@@ -1,4 +1,5 @@
 ﻿//#include <iostream>
+#include <windows.h>
 #include <sstream>
 #include <SDL/SDL.h>
 #include <SDL/SDL_opengl.h>
@@ -10,16 +11,72 @@
 
 #define YY_SPF 16
 
+#ifdef WINDOWS__
+//WNDPROC oldProc;
+HICON icon;
+HWND hwnd;
+/*
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	if (msg == WM_SETCURSOR)
+	{
+		if (LOWORD(lParam) == HTCLIENT)
+		{
+			::SetCursor(::LoadCursor(NULL, IDC_ARROW));
+			return TRUE;
+		}
+	}
+
+	return ::CallWindowProc(oldProc, hwnd, msg, wParam, lParam);
+}*/
+
+void init_win32()
+{
+	HINSTANCE handle = ::GetModuleHandle(NULL);
+	icon = ::LoadIcon(handle, "DEFAULT_ICON");
+
+	SDL_SysWMinfo wminfo;
+	SDL_VERSION(&wminfo.version)
+	if (SDL_GetWMInfo(&wminfo) != 1)
+	{
+		// error: wrong SDL version
+	}
+
+	hwnd = wminfo.window;
+
+	::SetClassLong(hwnd, GCL_HICON, (LONG) icon);
+
+	oldProc = (WNDPROC) ::SetWindowLong(hwnd, GWL_WNDPROC, (LONG) WndProc);
+}
+
+void done_win32()
+{
+	::DestroyIcon(icon);
+}
+
+#endif
+
 int main(int argc, char **argv) {
 	unsigned int vflags = SDL_OPENGL | SDL_DOUBLEBUF; // | SDL_RESIZABLE
-	unsigned int scr_width = 1024, scr_height = 1024;
+	unsigned int scr_width = 1200, scr_height = 800;
 
 	if(SDL_Init(SDL_INIT_EVERYTHING)) return 1;
 	SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
+	/*Uint32 colorKey;
+	SDL_Surface *image;
+	image = SDL_LoadBMP("icon32.bmp");
+	colorKey = SDL_MapRGB(image->format, 255, 0, 0);
+	SDL_SetColorKey(image, SDL_SRCCOLORKEY, colorKey);*/
+	//SDL_WM_SetIcon(DEFAULT_ICO, NULL);
+	SDL_WM_SetCaption("HAVOC", "HAVOC");
+	#ifdef WINDOWS__
+	init_win32();
+	#endif
+	
 	if(!SDL_SetVideoMode(scr_width, scr_height, 0, vflags)) return 2;
-	SDL_WM_SetCaption("HAVOC", NULL);
+	
 
 	glClearColor(0.0f, 0.0f, 0.3f, 1.0f);
 	//glClearDepth(1.0f);
@@ -61,5 +118,8 @@ int main(int argc, char **argv) {
 		t_before = SDL_GetTicks();
 	}
 	SDL_Quit();
+	#ifdef WINDOWS__
+	done_win32();
+	#endif
 	return 0;
 }
