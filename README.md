@@ -2,10 +2,10 @@
 
 A cross-platform 2D platform game.
 
-##Windows Binary:
+#####Windows Binary:
 http://yiamiyo.no-ip.org/Havoc_0.1.zip
 
-##Build Requirements:
+#####Build Requirements:
 
 http://www.libsdl.org/download-1.2.php
 
