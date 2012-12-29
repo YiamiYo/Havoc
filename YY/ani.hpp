@@ -1,4 +1,4 @@
-﻿#ifndef YY_ANI_HPP
+#ifndef YY_ANI_HPP
 #define YY_ANI_HPP
 #define YY_ANI_VER 0.10
 

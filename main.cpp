@@ -1,4 +1,4 @@
-﻿//#include <iostream>
+//#include <iostream>
 #include <windows.h>
 #include <sstream>
 #include <SDL/SDL.h>
